@@ -134,6 +134,9 @@ function createComponentStubsForAll (component) {
   Object.keys(component.components).forEach(function (c) {
     // Remove cached constructor
     delete component.components[c]._Ctor;
+    if (!component.components[c].name) {
+      component.components[c].name = c;
+    }
     components[c] = createBlankStub(component.components[c]);
 
     // ignoreElements does not exist in Vue 2.0.x
@@ -248,6 +251,8 @@ var NAME_SELECTOR = 'NAME_SELECTOR';
 var COMPONENT_SELECTOR = 'COMPONENT_SELECTOR';
 var REF_SELECTOR = 'REF_SELECTOR';
 var DOM_SELECTOR = 'DOM_SELECTOR';
+var VUE_VERSION = Number(((Vue.version.split('.')[0]) + "." + (Vue.version.split('.')[1])));
+var FUNCTIONAL_OPTIONS = VUE_VERSION >= 2.5 ? 'fnOptions' : 'functionalOptions';
 
 // 
 
@@ -316,7 +321,7 @@ function findAllFunctionalComponentsFromVnode (
 ) {
   if ( components === void 0 ) components = [];
 
-  if (vnode.fnOptions) {
+  if (vnode[FUNCTIONAL_OPTIONS] || vnode.functionalContext) {
     components.push(vnode);
   }
   if (vnode.children) {
@@ -342,11 +347,15 @@ function vmCtorMatchesSelector (component, selector) {
 }
 
 function vmFunctionalCtorMatchesSelector (component, Ctor) {
-  if (!component.fnOptions) {
+  if (VUE_VERSION < 2.3) {
+    throwError('find for functional components is not support in Vue < 2.3');
+  }
+
+  if (!component[FUNCTIONAL_OPTIONS]) {
     return false
   }
-  var Ctors = Object.keys(component.fnOptions._Ctor);
-  return Ctors.some(function (c) { return Ctor[c] === component.fnOptions._Ctor[c]; })
+  var Ctors = Object.keys(component[FUNCTIONAL_OPTIONS]._Ctor);
+  return Ctors.some(function (c) { return Ctor[c] === component[FUNCTIONAL_OPTIONS]._Ctor[c]; })
 }
 
 function findVueComponents (
@@ -355,10 +364,10 @@ function findVueComponents (
   selector
 ) {
   if (selector.functional) {
-    var components$1 = root._vnode
+    var nodes = root._vnode
     ? findAllFunctionalComponentsFromVnode(root._vnode)
     : findAllFunctionalComponentsFromVnode(root);
-    return components$1.filter(function (component) { return vmFunctionalCtorMatchesSelector(component, selector._Ctor); })
+    return nodes.filter(function (node) { return vmFunctionalCtorMatchesSelector(node, selector._Ctor); })
   }
   var components = root._isVue
     ? findAllVueComponentsFromVm(root)
@@ -387,6 +396,10 @@ WrapperArray.prototype.at = function at (index) {
     throwError(("no item exists at " + index));
   }
   return this.wrappers[index]
+};
+
+WrapperArray.prototype.filter = function filter (predicate) {
+  return new WrapperArray(this.wrappers.filter(predicate))
 };
 
 WrapperArray.prototype.attributes = function attributes () {
@@ -826,11 +839,18 @@ Wrapper.prototype.classes = function classes () {
 /**
  * Checks if wrapper contains provided selector.
  */
-Wrapper.prototype.contains = function contains (selector) {
+Wrapper.prototype.contains = function contains (selector, predicate) {
+    var this$1 = this;
+
   var selectorType = getSelectorTypeOrThrow(selector, 'contains');
   var nodes = find(this.vm, this.vnode, selectorType, selector);
+  var wrappers = nodes.map(function (node) { return createWrapper(node, this$1.update, this$1.options); }
+  );
+  if (predicate) {
+    wrappers = wrappers.filter(predicate);
+  }
   var is = selectorType === REF_SELECTOR ? false : this.is(selector);
-  return nodes.length > 0 || is
+  return wrappers.length > 0 || is
 };
 
 /**
@@ -968,28 +988,37 @@ Wrapper.prototype.hasStyle = function hasStyle (style, value) {
 /**
  * Finds first node in tree of the current wrapper that matches the provided selector.
  */
-Wrapper.prototype.find = function find$$1 (selector) {
+Wrapper.prototype.find = function find$$1 (selector, predicate) {
+    var this$1 = this;
+
   var selectorType = getSelectorTypeOrThrow(selector, 'find');
-  var nodes = find(this.vm, this.vnode, selectorType, selector);
-  if (nodes.length === 0) {
+  var wrappers = find(this.vm, this.vnode, selectorType, selector).map(function (node) { return createWrapper(node, this$1.update, this$1.options); }
+  );
+  if (predicate) {
+    wrappers = wrappers.filter(predicate);
+  }
+  if (wrappers.length === 0) {
     if (selector.ref) {
       return new ErrorWrapper(("ref=\"" + (selector.ref) + "\""))
     }
     return new ErrorWrapper(typeof selector === 'string' ? selector : 'Component')
   }
-  return createWrapper(nodes[0], this.update, this.options)
+  return wrappers[0]
 };
 
 /**
  * Finds node in tree of the current wrapper that matches the provided selector.
  */
-Wrapper.prototype.findAll = function findAll$1 (selector) {
+Wrapper.prototype.findAll = function findAll$1 (selector, predicate) {
     var this$1 = this;
 
   var selectorType = getSelectorTypeOrThrow(selector, 'findAll');
   var nodes = find(this.vm, this.vnode, selectorType, selector);
   var wrappers = nodes.map(function (node) { return createWrapper(node, this$1.update, this$1.options); }
   );
+  if (predicate) {
+    wrappers = wrappers.filter(predicate);
+  }
   return new WrapperArray(wrappers)
 };
 
